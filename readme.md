@@ -37,7 +37,7 @@ $$
 
 其中 $\kappa_a=2\pi d/\lambda$，$d$ 为阵元间距，$\lambda$ 为载波波长；当导频子载波按间隔 $D$ 均匀抽取时，$\kappa_\tau=2\pi D\Delta f$。因此 $\theta_{n,k}$ 和 $\tau_{n,k}$ 均为无量纲相位参数，而 $t_{n,k}$ 是包含公共时钟偏差的物理测量时延。
 
-### 1.2 修改后的技术路线
+### 1.2 技术路线
 
 1. 保留原天线域—子载波域接收信号模型，但直接以 $K$ 条物理路径为参数，不再将感兴趣区域离散成位置网格，也不构造位置域稀疏反射向量。
 2. 分别对两个接收站的观测执行过采样 2D-FFT，获得每条路径归一化空间相位 $\theta_{n,k}$ 和归一化时延相位 $\tau_{n,k}$ 的粗估计，并反归一化为物理入射角 $\phi_{n,k}$ 和测量时延 $t_{n,k}$。
@@ -50,7 +50,7 @@ $$
    - 归一化空间相位和时延相位通过 Dirac delta 因子与目标位置、UE 位置和时钟偏差保持确定性几何关系；
    - 目标位置、UE 位置和时钟偏差采用以粗估计为均值的高斯先验。
 6. 第一部分执行连续线谱贝叶斯估计：以上一轮归一化角度和时延相位为展开点，对参数化路径矩阵作一阶泰勒展开，并更新散射系数、噪声精度以及角度—时延相位的后验消息。
-7. 第二部分执行非线性几何消息传递：将线谱模块输出的角度—时延联合消息输入 Dirac 几何因子，推断目标位置、UE 位置和时钟偏差；必要时将几何外信息反馈给线谱模块继续迭代。
+7. 第二部分将 Dirac 因子内部的几何映射在上一轮 $\boldsymbol z^{(l-1)}$ 处作一阶 Taylor 展开，把线谱模块输出的角度—时延联合消息等价转换成关于几何参数 $\boldsymbol z$ 的高斯信息消息，并与几何先验融合得到后验分布。
 
 整体信息流为
 
@@ -70,7 +70,7 @@ LM：目标位置 + UE 位置 + 时钟偏差粗估计
 非稀疏参数化分层贝叶斯模型
     ├─ 第一部分：Taylor 线性化连续线谱贝叶斯估计
     │    └─ 输出 (theta_n,tau_n) 联合概率消息
-    └─ 第二部分：Dirac 几何因子上的非线性消息传递
+    └─ 第二部分：线性化 Dirac 几何因子并计算 z 的高斯后验
     ↓
 目标位置、UE 位置、时钟偏差及其后验不确定性
 ```
@@ -452,56 +452,9 @@ p(\mathcal H,\boldsymbol\gamma,
 \mid\mathcal Y).
 $$
 
-## 4. Dirac 因子图及其等价后验
+## 4. 2D-FFT 与 LM 粗初始化
 
-Dirac delta 因子将 $\boldsymbol\theta_n$ 和 $\boldsymbol\tau_n$ 严格限制为 $\boldsymbol z$ 的确定性函数。从概率分布角度，可将其直接代入路径矩阵：
-
-$$
-\widetilde{\mathbf A}_n(\boldsymbol z)
-=\mathbf A_n\!\left(
-\boldsymbol g_{\theta,n}(\mathbf P),
-\boldsymbol g_{\tau,n}(
-\mathbf P,\boldsymbol p_{\mathrm{UE}},\Delta t)
-\right).
-$$
-
-于是等价观测模型为
-
-$$
-\boldsymbol y_n
-=\widetilde{\mathbf A}_n(\boldsymbol z)
-\boldsymbol h_n+\boldsymbol w_n,
-$$
-
-后验可简化为
-
-$$
-\begin{aligned}
-p(\mathcal H,\boldsymbol\gamma,\boldsymbol z\mid\mathcal Y)
-\propto{}&
-\left\{\prod_{n=1}^{N_{\mathrm{Rx}}}
-\mathcal{CN}\!\left(
-\boldsymbol y_n;
-\widetilde{\mathbf A}_n(\boldsymbol z)\boldsymbol h_n,
-\gamma_n^{-1}\mathbf I_M
-\right)
-p(\boldsymbol h_n)p(\gamma_n)
-\right\}
-p(\boldsymbol z).
-\end{aligned}
-$$
-
-这是完整模型对应的等价后验，可用于核对两模块消息传递是否与原概率模型一致。实际算法保留
-$\boldsymbol\theta_n$、$\boldsymbol\tau_n$ 和 Dirac 因子作为线谱模块与几何模块之间的接口。线谱模块可以维护
-$q(\boldsymbol\theta_n,\boldsymbol\tau_n)$ 的局部近似并将其作为消息输出，但该分布不是与
-$\boldsymbol z$ 无关的全局均值场因子；它必须通过 Dirac 几何因子与
-$p(\boldsymbol z)$ 交换消息。
-
-2D-FFT 输出的 $\widehat{\boldsymbol\theta}_n$ 和 $\widehat{\boldsymbol\tau}_n$ 是由同一原始观测 $\boldsymbol y_n$ 得到的初始化量，在当前模型中不再作为独立观测似然与 $p(\boldsymbol y_n\mid\cdot)$ 重复相乘，否则会重复使用同一份数据。若后续确实希望在贝叶斯阶段继续使用 FFT 测量值，则需要另外引入带有限协方差的 $p(\widehat{\boldsymbol\theta}_n\mid\boldsymbol\theta_n)$ 和 $p(\widehat{\boldsymbol\tau}_n\mid\boldsymbol\tau_n)$，此时它们不应写成几何 Dirac 因子。
-
-## 5. 2D-FFT 与 LM 粗初始化
-
-### 5.1 过采样 2D-FFT
+### 4.1 过采样 2D-FFT
 
 按“子载波索引为行、阵元索引为列”将第 $n$ 个接收站的观测恢复成矩阵。在归一化参数下，采用 $\boldsymbol a(\theta)\propto[e^{jm\theta}]_m$ 和 $\boldsymbol b(\tau)\propto[e^{-jq\tau}]_q$ 时，单条路径对应
 
@@ -539,7 +492,7 @@ $$
 
 现有 `CoarseEstimation2DFFT.m` 针对代码中的负指数阵列约定沿阵元维使用 IFFT，并直接输出方向余弦和秒单位时延。若后续将代码接口也统一为本节的正指数归一化参数，应同步修改变换方向和输出映射。
 
-### 5.2 双站关联与目标位置粗估计
+### 4.2 双站关联与目标位置粗估计
 
 1. 将归一化空间相位除以 $\kappa_a$，恢复方向余弦和全局物理角度；
 2. 由每个角度从对应接收站发出射线；
@@ -549,7 +502,7 @@ $$
 
 距离差中 UE—目标距离和公共时钟偏差均被抵消，因此适合作为两站路径关联的物理一致性量。
 
-### 5.3 LM 几何粗估计
+### 4.3 LM 几何粗估计
 
 以关联后的目标位置、UE 粗位置和零时钟偏差为初值，构造
 
@@ -575,30 +528,21 @@ $$
 
 在当前分阶段实现中，目标位置先由 AoA 射线固定。此时同一目标的两个接收站观测对 UE 位置和公共时钟偏差只提供一个独立和式约束，因此至少需要 3 个几何分散的目标，并应检查 LM 雅可比矩阵秩。若秩亏，不能将 LM 输出解释为唯一的 UE—时钟解。
 
-## 6. 两部分贝叶斯推断与消息传递
+## 5. 两部分贝叶斯推断与消息传递
 
-### 6.1 路径矩阵关于角度和时延的一阶展开
+### 5.1 路径矩阵关于角度和时延的一阶展开
 
-为与泰勒展开的记号一致，以下记
+记
 
 $$
 \boldsymbol\Phi_n(\boldsymbol\theta_n,\boldsymbol\tau_n)
 :=\mathbf A_n(\boldsymbol\theta_n,\boldsymbol\tau_n).
 $$
 
-第 $l$ 轮推断以上一轮后验均值对应的
+第 $l$ 轮推断以上一轮后验均值
 $\boldsymbol\theta_n^{(l-1)}$ 和
-$\boldsymbol\tau_n^{(l-1)}$ 为展开点，并定义
-
-$$
-\Delta\boldsymbol\theta_n^{(l)}
-=\boldsymbol\theta_n-\boldsymbol\theta_n^{(l-1)},
-\qquad
-\Delta\boldsymbol\tau_n^{(l)}
-=\boldsymbol\tau_n-\boldsymbol\tau_n^{(l-1)}.
-$$
-
-由于 $\boldsymbol\Phi_n$ 的第 $k$ 列只依赖
+$\boldsymbol\tau_n^{(l-1)}$ 为展开点。由于
+$\boldsymbol\Phi_n$ 的第 $k$ 列只依赖
 $(\theta_{n,k},\tau_{n,k})$，定义两个 $M\times K$ 的列导数矩阵
 
 $$
@@ -637,7 +581,7 @@ $$
 \otimes\boldsymbol b(\tau_{n,k}).
 $$
 
-于是相应的一阶泰勒近似可严格写为
+于是路径矩阵的一阶 Taylor 近似为
 
 $$
 \begin{aligned}
@@ -646,12 +590,12 @@ $$
 \boldsymbol\Phi_n^{(l-1)}
 +\boldsymbol\Phi_{\theta,n}^{(l-1)}
 \operatorname{diag}\!\left(
-\Delta\boldsymbol\theta_n^{(l)}
+\boldsymbol\theta_n-\boldsymbol\theta_n^{(l-1)}
 \right)
 \\
 &+\boldsymbol\Phi_{\tau,n}^{(l-1)}
 \operatorname{diag}\!\left(
-\Delta\boldsymbol\tau_n^{(l)}
+\boldsymbol\tau_n-\boldsymbol\tau_n^{(l-1)}
 \right),
 \end{aligned}
 $$
@@ -667,7 +611,7 @@ $$
 $$
 
 注意，$\partial\boldsymbol\Phi_n/\partial\boldsymbol\theta_n$
-若按一般矩阵对向量求导会形成三阶张量；上述列导数定义利用了各路径列之间的参数独立性，使泰勒式中的两个右乘对角矩阵具有明确维度。
+若按一般矩阵对向量求导会形成三阶张量；上述列导数定义利用了各路径列之间的参数独立性，使 Taylor 式中的两个右乘对角矩阵具有明确维度。
 
 令
 
@@ -703,23 +647,29 @@ $$
 \left(-j\mathbf D_b\boldsymbol b(\tau_{n,k})\right).
 $$
 
-### 6.2 第一部分：连续线谱贝叶斯估计
+### 5.2 第一部分：连续线谱贝叶斯估计
 
-第一部分只处理观测模型中的连续线谱参数
+第一部分直接更新观测模型中的
 $\boldsymbol h_n$、$\boldsymbol\theta_n$、
-$\boldsymbol\tau_n$ 和 $\gamma_n$，不在该模块中对位置或时钟变量作 Taylor 展开。定义联合相位增量
+$\boldsymbol\tau_n$ 和 $\gamma_n$，不再另外定义相位增量随机变量。为紧凑表示绝对相位，记
 
 $$
-\boldsymbol\xi_n^{(l)}
+\boldsymbol x_n
 :=
 \begin{bmatrix}
-\Delta\boldsymbol\theta_n^{(l)}\\
-\Delta\boldsymbol\tau_n^{(l)}
-\end{bmatrix}
-\in\mathbb R^{2K},
+\boldsymbol\theta_n\\
+\boldsymbol\tau_n
+\end{bmatrix},
+\qquad
+\boldsymbol x_n^{(l-1)}
+:=
+\begin{bmatrix}
+\boldsymbol\theta_n^{(l-1)}\\
+\boldsymbol\tau_n^{(l-1)}
+\end{bmatrix}.
 $$
 
-以及给定散射系数时的线性化矩阵
+给定散射系数，定义线性化矩阵
 
 $$
 \mathbf G_n^{(l-1)}(\boldsymbol h_n)
@@ -733,28 +683,37 @@ $$
 \right].
 $$
 
-由第 6.1 节的一阶展开，观测可近似写为
+由第 5.1 节的一阶展开，观测可近似写为
 
 $$
 \boldsymbol y_n
 \approx
 \boldsymbol\Phi_n^{(l-1)}\boldsymbol h_n
 +\mathbf G_n^{(l-1)}(\boldsymbol h_n)
-\boldsymbol\xi_n^{(l)}
+\left(
+\boldsymbol x_n-\boldsymbol x_n^{(l-1)}
+\right)
 +\boldsymbol w_n.
 $$
 
 等价地，定义
 
 $$
+\begin{aligned}
 \widehat{\boldsymbol\Phi}_n^{(l)}
-(\boldsymbol\xi_n)
-:=
+(\boldsymbol\theta_n,\boldsymbol\tau_n)
+:={}&
 \boldsymbol\Phi_n^{(l-1)}
 +\boldsymbol\Phi_{\theta,n}^{(l-1)}
-\operatorname{diag}(\Delta\boldsymbol\theta_n)
-+\boldsymbol\Phi_{\tau,n}^{(l-1)}
-\operatorname{diag}(\Delta\boldsymbol\tau_n),
+\operatorname{diag}\!\left(
+\boldsymbol\theta_n-\boldsymbol\theta_n^{(l-1)}
+\right)
+\\
+&+\boldsymbol\Phi_{\tau,n}^{(l-1)}
+\operatorname{diag}\!\left(
+\boldsymbol\tau_n-\boldsymbol\tau_n^{(l-1)}
+\right),
+\end{aligned}
 $$
 
 则
@@ -763,59 +722,61 @@ $$
 \boldsymbol y_n
 \approx
 \widehat{\boldsymbol\Phi}_n^{(l)}
-(\boldsymbol\xi_n)\boldsymbol h_n
-+\boldsymbol w_n.
+(\boldsymbol\theta_n,\boldsymbol\tau_n)
+\boldsymbol h_n+\boldsymbol w_n.
 $$
 
 线谱模块采用
 
 $$
-q(\boldsymbol h_n,\gamma_n,\boldsymbol\xi_n)
-=q(\boldsymbol h_n)q(\gamma_n)q(\boldsymbol\xi_n)
+q(\boldsymbol h_n,\gamma_n,\boldsymbol\theta_n,\boldsymbol\tau_n)
+=
+q(\boldsymbol h_n)q(\gamma_n)
+q(\boldsymbol\theta_n,\boldsymbol\tau_n)
 $$
 
-的局部均值场分解。来自几何模块的输入消息用信息形式表示为
+的局部均值场分解，其中角度和时延保留联合后验。来自几何模块的绝对相位输入消息用信息形式表示为
 
 $$
-m_{\mathrm{geo}\rightarrow\xi_n}(\boldsymbol\xi_n)
+m_{\mathrm{geo}\rightarrow x_n}(\boldsymbol x_n)
 \propto
 \exp\!\left(
--\frac{1}{2}\boldsymbol\xi_n^T
-\boldsymbol\Lambda_{\xi,n}^{\mathrm{in}}\boldsymbol\xi_n
-+\boldsymbol\eta_{\xi,n}^{\mathrm{in}\,T}
-\boldsymbol\xi_n
+-\frac{1}{2}\boldsymbol x_n^T
+\boldsymbol\Lambda_{x,n}^{\mathrm{in}}\boldsymbol x_n
++\boldsymbol\eta_{x,n}^{\mathrm{in}\,T}
+\boldsymbol x_n
 \right).
 $$
 
 首次执行线谱估计时，可令
-$\boldsymbol\Lambda_{\xi,n}^{\mathrm{in}}=\mathbf 0$，
-仅将 2D-FFT 结果作为 Taylor 展开中心；也可将几何高斯先验通过 Dirac 因子传播后形成初始输入消息。不能把由同一
-$\boldsymbol y_n$ 得到的 2D-FFT 峰值再次作为独立概率观测相乘。
+$\boldsymbol\Lambda_{x,n}^{\mathrm{in}}=\mathbf 0$；
+2D-FFT 结果只用于设置首次 Taylor 展开点
+$\boldsymbol x_n^{(0)}$，不能再作为独立概率观测与同一
+$\boldsymbol y_n$ 的似然重复相乘。
 
-### 6.3 线谱模块的变分更新与输出消息
+### 5.3 角度、时延及其他线谱参数的变分更新
 
-散射系数和相位增量的变分因子分别取为
+散射系数和绝对相位的变分因子分别取为
 
 $$
 q(\boldsymbol h_n)
 =\mathcal{CN}(\boldsymbol h_n;
 \boldsymbol m_{h,n},\mathbf C_{h,n}),
-\qquad
-q(\boldsymbol\xi_n)
-=\mathcal N(\boldsymbol\xi_n;
-\boldsymbol m_{\xi,n},\mathbf C_{\xi,n}).
 $$
 
-在第 $l$ 轮局部线性模型下，散射系数更新为
-
 $$
-\widehat{\boldsymbol\Phi}_n^{(l)}
-=\boldsymbol\Phi_n^{(l-1)}
-+\sum_{r=1}^{2K}
-\mathbf F_{n,r}^{(l-1)}\xi_{n,r},
+q(\boldsymbol\theta_n,\boldsymbol\tau_n)
+=
+\mathcal N\!\left(
+\begin{bmatrix}
+\boldsymbol\theta_n\\
+\boldsymbol\tau_n
+\end{bmatrix};
+\boldsymbol m_{x,n},\mathbf C_{x,n}
+\right).
 $$
 
-其中，令 $\boldsymbol e_r$ 表示第 $r$ 个 $K$ 维标准基向量，则
+令 $\boldsymbol e_r$ 表示第 $r$ 个 $K$ 维标准基向量，并定义
 
 $$
 \mathbf F_{n,r}^{(l-1)}
@@ -830,10 +791,25 @@ $$
 \end{cases}
 $$
 
-若当前
-$q(\boldsymbol\xi_n)
-=\mathcal N(\boldsymbol m_{\xi,n},\mathbf C_{\xi,n})$，
-则局部路径矩阵的一阶矩为
+则局部路径矩阵可写为
+
+$$
+\widehat{\boldsymbol\Phi}_n^{(l)}
+=
+\boldsymbol\Phi_n^{(l-1)}
++\sum_{r=1}^{2K}
+\mathbf F_{n,r}^{(l-1)}
+\left(x_{n,r}-x_{n,r}^{(l-1)}\right).
+$$
+
+记绝对相位后验均值相对于展开点的偏移为
+
+$$
+\boldsymbol d_{x,n}
+=\boldsymbol m_{x,n}-\boldsymbol x_n^{(l-1)}.
+$$
+
+于是局部路径矩阵的一阶矩为
 
 $$
 \mathbb E[
@@ -842,7 +818,7 @@ $$
 =
 \boldsymbol\Phi_n^{(l-1)}
 +\sum_r
-\mathbf F_{n,r}^{(l-1)}m_{\xi,n,r},
+\mathbf F_{n,r}^{(l-1)}d_{x,n,r},
 $$
 
 二阶矩为
@@ -857,7 +833,7 @@ $$
 \boldsymbol\Phi_n^{(l-1)H}
 \boldsymbol\Phi_n^{(l-1)}
 \\
-&+\sum_r m_{\xi,n,r}
+&+\sum_r d_{x,n,r}
 \left(
 \mathbf F_{n,r}^{(l-1)H}\boldsymbol\Phi_n^{(l-1)}
 +\boldsymbol\Phi_n^{(l-1)H}\mathbf F_{n,r}^{(l-1)}
@@ -865,20 +841,20 @@ $$
 \\
 &+\sum_{r,s}
 \left(
-[\mathbf C_{\xi,n}]_{r,s}
-+m_{\xi,n,r}m_{\xi,n,s}
+[\mathbf C_{x,n}]_{r,s}
++d_{x,n,r}d_{x,n,s}
 \right)
 \mathbf F_{n,r}^{(l-1)H}
 \mathbf F_{n,s}^{(l-1)}.
 \end{aligned}
 $$
 
-因此
+因此散射系数后验更新为
 
 $$
 \mathbf C_{h,n}^{-1}
 =\mathbb E[\gamma_n]\,
-\mathbb E_{q(\boldsymbol\xi_n)}
+\mathbb E_{q(\boldsymbol\theta_n,\boldsymbol\tau_n)}
 \left[
 \widehat{\boldsymbol\Phi}_n^{(l)H}
 \widehat{\boldsymbol\Phi}_n^{(l)}
@@ -890,15 +866,11 @@ $$
 \boldsymbol m_{h,n}
 =\mathbf C_{h,n}
 \mathbb E[\gamma_n]\,
-\mathbb E_{q(\boldsymbol\xi_n)}
+\mathbb E_{q(\boldsymbol\theta_n,\boldsymbol\tau_n)}
 \left[
 \widehat{\boldsymbol\Phi}_n^{(l)H}
 \right]\boldsymbol y_n.
 $$
-
-由于 $\widehat{\boldsymbol\Phi}_n^{(l)}$ 关于
-$\boldsymbol\xi_n$ 是仿射函数，以上一阶和二阶矩阵期望只依赖
-$q(\boldsymbol\xi_n)$ 的均值与协方差，可以解析计算。
 
 噪声精度仍为 Gamma 分布：
 
@@ -916,7 +888,6 @@ b_{\gamma,n}
 \left\|
 \boldsymbol y_n-
 \widehat{\boldsymbol\Phi}_n^{(l)}
-(\boldsymbol\xi_n)
 \boldsymbol h_n
 \right\|^2
 \right],
@@ -925,8 +896,7 @@ b_{\gamma,n}
 =\frac{a_{\gamma,n}}{b_{\gamma,n}}.
 $$
 
-期望残差应同时保留散射系数协方差和相位增量协方差产生的二阶矩，不能只将
-$\boldsymbol h_n$ 与 $\boldsymbol\xi_n$ 替换为后验均值。具体地，
+期望残差为
 
 $$
 \begin{aligned}
@@ -960,13 +930,15 @@ $$
 \end{aligned}
 $$
 
-给定当前 $q(\boldsymbol h_n)$ 和 $q(\gamma_n)$，相位增量的局部高斯更新为
+该期望同时保留散射系数以及角度—时延后验协方差产生的二阶矩。
+
+给定当前 $q(\boldsymbol h_n)$ 和 $q(\gamma_n)$，绝对相位的联合高斯更新为
 
 $$
 \begin{aligned}
-\mathbf C_{\xi,n}^{-1}
+\mathbf C_{x,n}^{-1}
 ={}&
-\boldsymbol\Lambda_{\xi,n}^{\mathrm{in}}
+\boldsymbol\Lambda_{x,n}^{\mathrm{in}}
 \\
 &+2\mathbb E[\gamma_n]\,
 \operatorname{Re}\!\left\{
@@ -980,10 +952,10 @@ $$
 
 $$
 \begin{aligned}
-\boldsymbol m_{\xi,n}
-=\mathbf C_{\xi,n}
+\boldsymbol m_{x,n}
+=\mathbf C_{x,n}
 \Bigg[
-&\boldsymbol\eta_{\xi,n}^{\mathrm{in}}
+&\boldsymbol\eta_{x,n}^{\mathrm{in}}
 \\
 &+2\mathbb E[\gamma_n]\,
 \operatorname{Re}\!\left\{
@@ -991,8 +963,9 @@ $$
 \left[
 \mathbf G_n^{(l-1)H}
 \left(
-\boldsymbol y_n-
-\boldsymbol\Phi_n^{(l-1)}\boldsymbol h_n
+\boldsymbol y_n
+-\boldsymbol\Phi_n^{(l-1)}\boldsymbol h_n
++\mathbf G_n^{(l-1)}\boldsymbol x_n^{(l-1)}
 \right)
 \right]
 \right\}
@@ -1000,81 +973,63 @@ $$
 \end{aligned}
 $$
 
-这里的因子 2 来自圆对称复高斯似然和实值
-$\boldsymbol\xi_n$ 的组合。线谱模块得到的绝对相位均值为
+这里的因子 2 来自圆对称复高斯似然和实值绝对相位参数的组合。更新后的角度与时延后验均值直接为
 
 $$
 \boldsymbol\mu_{\theta,n}^{\mathrm{post}}
-=\boldsymbol\theta_n^{(l-1)}
-+[\boldsymbol m_{\xi,n}]_{1:K},
+=[\boldsymbol m_{x,n}]_{1:K},
 \qquad
 \boldsymbol\mu_{\tau,n}^{\mathrm{post}}
-=\boldsymbol\tau_n^{(l-1)}
-+[\boldsymbol m_{\xi,n}]_{K+1:2K},
+=[\boldsymbol m_{x,n}]_{K+1:2K},
 $$
 
-并保留 $\mathbf C_{\xi,n}$ 中角度、时延及不同路径之间的相关性。为避免在两个模块之间重复使用先验信息，发送给几何模块的外信息应从后验信息参数中扣除输入消息：
+并保留 $\mathbf C_{x,n}$ 中角度、时延及不同路径之间的相关性。为避免重复使用几何输入信息，发送给几何模块的外信息为
 
 $$
-\boldsymbol\Lambda_{\xi,n}^{\mathrm{ext}}
-=\mathbf C_{\xi,n}^{-1}
--\boldsymbol\Lambda_{\xi,n}^{\mathrm{in}},
+\boldsymbol\Lambda_{x,n}^{\mathrm{ext}}
+=\mathbf C_{x,n}^{-1}
+-\boldsymbol\Lambda_{x,n}^{\mathrm{in}},
 \qquad
-\boldsymbol\eta_{\xi,n}^{\mathrm{ext}}
-=\mathbf C_{\xi,n}^{-1}\boldsymbol m_{\xi,n}
--\boldsymbol\eta_{\xi,n}^{\mathrm{in}}.
+\boldsymbol\eta_{x,n}^{\mathrm{ext}}
+=\mathbf C_{x,n}^{-1}\boldsymbol m_{x,n}
+-\boldsymbol\eta_{x,n}^{\mathrm{in}}.
 $$
 
-记当前绝对相位展开中心为
-
-$$
-\boldsymbol x_n^{(l-1)}
-=
-\begin{bmatrix}
-\boldsymbol\theta_n^{(l-1)}\\
-\boldsymbol\tau_n^{(l-1)}
-\end{bmatrix}.
-$$
-
-当 $\boldsymbol\Lambda_{\xi,n}^{\mathrm{ext}}$ 非奇异时，发送给几何模块的高斯外信息参数为
+当 $\boldsymbol\Lambda_{x,n}^{\mathrm{ext}}$ 非奇异时，线谱模块输出的绝对相位高斯消息参数为
 
 $$
 \mathbf V_{x,n}^{\mathrm{LS}}
 =\left(
-\boldsymbol\Lambda_{\xi,n}^{\mathrm{ext}}
+\boldsymbol\Lambda_{x,n}^{\mathrm{ext}}
 \right)^{-1},
 \qquad
 \boldsymbol\mu_{x,n}^{\mathrm{LS}}
-=\boldsymbol x_n^{(l-1)}
-+\mathbf V_{x,n}^{\mathrm{LS}}
-\boldsymbol\eta_{\xi,n}^{\mathrm{ext}}.
+=\mathbf V_{x,n}^{\mathrm{LS}}
+\boldsymbol\eta_{x,n}^{\mathrm{ext}}.
 $$
 
 若外信息精度矩阵奇异，则应保留其信息形式或使用定义在可辨识子空间上的伪逆，不能人为加入高精度正则项制造虚假的确定性。
 
-在接受当前线谱增量后，更新
-$\boldsymbol\theta_n^{(l)}=
-\boldsymbol\theta_n^{(l-1)}
-+[\boldsymbol m_{\xi,n}]_{1:K}$ 和
-$\boldsymbol\tau_n^{(l)}=
-\boldsymbol\tau_n^{(l-1)}
-+[\boldsymbol m_{\xi,n}]_{K+1:2K}$，
-并在新的相位中心重新计算
-$\boldsymbol\Phi_n$、$\boldsymbol\Phi_{\theta,n}$ 和
-$\boldsymbol\Phi_{\tau,n}$。若增量过大，应采用阻尼或信赖域保证一阶近似有效。
-
-### 6.4 第二部分：Dirac 几何因子上的非线性消息传递
-
-第二部分不再对几何映射作一阶 Taylor 展开，而是保留第 3.4 和 3.5 节中的非线性 Dirac 因子。定义
+接受当前更新后，直接令
 
 $$
-\boldsymbol x_n
-:=
-\begin{bmatrix}
-\boldsymbol\theta_n\\
-\boldsymbol\tau_n
-\end{bmatrix},
+\boldsymbol\theta_n^{(l)}
+=[\boldsymbol m_{x,n}]_{1:K},
 \qquad
+\boldsymbol\tau_n^{(l)}
+=[\boldsymbol m_{x,n}]_{K+1:2K},
+$$
+
+并在新的绝对相位均值处重新计算
+$\boldsymbol\Phi_n$、$\boldsymbol\Phi_{\theta,n}$ 和
+$\boldsymbol\Phi_{\tau,n}$。若相位均值相对于上一展开点变化过大，应采用阻尼或信赖域保证一阶近似有效。
+
+### 5.4 第二部分：Dirac 几何因子的一阶线性化与后验更新
+
+沿用第 5.2 节定义的绝对相位向量
+$\boldsymbol x_n=[\boldsymbol\theta_n^T,\boldsymbol\tau_n^T]^T$，并定义
+
+$$
 \boldsymbol g_n(\boldsymbol z)
 :=
 \begin{bmatrix}
@@ -1084,7 +1039,7 @@ $$
 \end{bmatrix},
 $$
 
-以及联合几何因子
+以及联合 Dirac 几何因子
 
 $$
 f_n(\boldsymbol x_n,\boldsymbol z)
@@ -1093,7 +1048,7 @@ f_n(\boldsymbol x_n,\boldsymbol z)
 \right).
 $$
 
-将线谱模块输出的外信息转换成关于绝对相位的联合消息
+将线谱模块输出的外信息转换成关于绝对相位的联合高斯消息
 
 $$
 m_{\mathrm{LS},n}(\boldsymbol x_n)
@@ -1104,11 +1059,48 @@ m_{\mathrm{LS},n}(\boldsymbol x_n)
 \mathbf V_{x,n}^{\mathrm{LS}}).
 $$
 
-该高斯消息定义在当前无模糊局部分支上；构造消息前应以 Taylor 中心为参考对
-$\theta$ 和 $\tau$ 解缠，避免在 $\pm\pi$ 或 $2\pi$ 边界产生虚假的大增量。
+该高斯消息定义在当前无模糊局部分支上；构造消息前应以展开点为参考对
+$\theta$ 和 $\tau$ 解缠，避免在 $\pm\pi$ 或 $2\pi$ 边界产生虚假的大增量。这里应保留
+$\boldsymbol\theta_n$ 与 $\boldsymbol\tau_n$ 的交叉协方差，而不是将其拆成相互独立的标量似然。
 
-这里应尽量保留 $\boldsymbol\theta_n$ 与
-$\boldsymbol\tau_n$ 的交叉协方差，而不是将其拆成互相独立的两个标量似然。Dirac 因子向几何变量发送的精确消息为
+在第 $l$ 次几何更新中，以上一次几何估计
+$\boldsymbol z^{(l-1)}$ 为展开点，并记
+
+$$
+\boldsymbol g_n^{(l-1)}
+=\boldsymbol g_n\!\left(\boldsymbol z^{(l-1)}\right),
+\qquad
+\mathbf J_n^{(l-1)}
+=\left.
+\frac{\partial\boldsymbol g_n(\boldsymbol z)}
+{\partial\boldsymbol z^T}
+\right|_{\boldsymbol z=\boldsymbol z^{(l-1)}}.
+$$
+
+令
+$\Delta\boldsymbol z^{(l)}
+=\boldsymbol z-\boldsymbol z^{(l-1)}$，则 Dirac 因子内部的几何映射可作一阶 Taylor 展开：
+
+$$
+\boldsymbol g_n(\boldsymbol z)
+\approx
+\boldsymbol g_n^{(l-1)}
++\mathbf J_n^{(l-1)}\Delta\boldsymbol z^{(l)},
+$$
+
+从而
+
+$$
+f_n(\boldsymbol x_n,\boldsymbol z)
+\approx
+\delta\!\left(
+\boldsymbol x_n
+-\boldsymbol g_n^{(l-1)}
+-\mathbf J_n^{(l-1)}\Delta\boldsymbol z^{(l)}
+\right).
+$$
+
+这里的一阶近似作用于 delta 函数内部的非线性映射，而不是对 delta 广义函数本身直接求 Taylor 展开。于是 Dirac 因子传递到几何变量的消息为
 
 $$
 \begin{aligned}
@@ -1119,109 +1111,143 @@ f_n(\boldsymbol x_n,\boldsymbol z)
 m_{\mathrm{LS},n}(\boldsymbol x_n)
 \mathrm d\boldsymbol x_n
 \\
-&=
-m_{\mathrm{LS},n}\!\left(
-\boldsymbol g_n(\boldsymbol z)
+&\approx
+\mathcal N\!\left(
+\boldsymbol g_n^{(l-1)}
++\mathbf J_n^{(l-1)}\Delta\boldsymbol z^{(l)};
+\boldsymbol\mu_{x,n}^{\mathrm{LS}},
+\mathbf V_{x,n}^{\mathrm{LS}}
 \right).
 \end{aligned}
 $$
 
-因此几何变量的后验信念满足
+令
 
 $$
-b(\boldsymbol z)
+\mathbf W_{x,n}^{\mathrm{LS}}
+=\left(\mathbf V_{x,n}^{\mathrm{LS}}\right)^{-1}
+=\boldsymbol\Lambda_{x,n}^{\mathrm{ext}},
+\qquad
+\boldsymbol r_n^{(l-1)}
+=\boldsymbol\mu_{x,n}^{\mathrm{LS}}
+-\boldsymbol g_n^{(l-1)},
+$$
+
+若 $\mathbf V_{x,n}^{\mathrm{LS}}$ 不可逆，则不计算其逆，直接使用线谱模块输出的半正定外信息精度
+$\boldsymbol\Lambda_{x,n}^{\mathrm{ext}}$ 作为
+$\mathbf W_{x,n}^{\mathrm{LS}}$。
+
+则上述消息关于几何增量
+$\Delta\boldsymbol z^{(l)}$ 的信息形式为
+
+$$
+m_{f_n\rightarrow z}(\boldsymbol z)
 \propto
-p(\boldsymbol z)
-\prod_{n=1}^{N_{\mathrm{Rx}}}
-m_{\mathrm{LS},n}\!\left(
-\boldsymbol g_n(\boldsymbol z)
-\right).
+\exp\!\left(
+-\frac{1}{2}
+\Delta\boldsymbol z^{(l)T}
+\boldsymbol\Lambda_{z,n}^{(l)}
+\Delta\boldsymbol z^{(l)}
++\boldsymbol\rho_{z,n}^{(l)T}
+\Delta\boldsymbol z^{(l)}
+\right),
 $$
 
-若线谱外信息采用高斯表示，则
+其中
+
+$$
+\boldsymbol\Lambda_{z,n}^{(l)}
+=\mathbf J_n^{(l-1)T}
+\mathbf W_{x,n}^{\mathrm{LS}}
+\mathbf J_n^{(l-1)},
+\qquad
+\boldsymbol\rho_{z,n}^{(l)}
+=\mathbf J_n^{(l-1)T}
+\mathbf W_{x,n}^{\mathrm{LS}}
+\boldsymbol r_n^{(l-1)}.
+$$
+
+等价地，将消息写成关于绝对几何变量
+$\boldsymbol z$ 的标准信息形式，有
+
+$$
+m_{f_n\rightarrow z}(\boldsymbol z)
+\propto
+\exp\!\left(
+-\frac{1}{2}\boldsymbol z^T
+\boldsymbol\Lambda_{z,n}^{(l)}\boldsymbol z
++\boldsymbol\eta_{z,n}^{(l)T}\boldsymbol z
+\right),
+$$
+
+其中
 
 $$
 \begin{aligned}
-\log b(\boldsymbol z)
-= {}&
-\log p(\boldsymbol z)
+\boldsymbol\eta_{z,n}^{(l)}
+&=\boldsymbol\rho_{z,n}^{(l)}
++\boldsymbol\Lambda_{z,n}^{(l)}
+\boldsymbol z^{(l-1)}
 \\
-&-\frac{1}{2}
-\sum_n
+&=\mathbf J_n^{(l-1)T}
+\mathbf W_{x,n}^{\mathrm{LS}}
 \left[
-\boldsymbol g_n(\boldsymbol z)
--\boldsymbol\mu_{x,n}^{\mathrm{LS}}
-\right]^T
-\left(\mathbf V_{x,n}^{\mathrm{LS}}\right)^{-1}
-\left[
-\boldsymbol g_n(\boldsymbol z)
--\boldsymbol\mu_{x,n}^{\mathrm{LS}}
-\right]
-+\mathrm{const}.
+\boldsymbol\mu_{x,n}^{\mathrm{LS}}
+-\boldsymbol g_n^{(l-1)}
++\mathbf J_n^{(l-1)}\boldsymbol z^{(l-1)}
+\right].
 \end{aligned}
 $$
 
-由于 $\boldsymbol g_n(\boldsymbol z)$ 包含方向余弦、欧氏距离和公共时钟偏差，上述消息关于
-$\boldsymbol z$ 通常不是高斯分布。可采用粒子消息传递、sigma-point 消息传递或局部 Laplace 高斯投影计算其均值与协方差。此处非线性几何关系仍由 Dirac 因子精确表达；近似只发生在消息的数值表示和投影步骤。
-
-若只执行一次两阶段估计，则直接由 $b(\boldsymbol z)$ 输出目标位置、UE 位置和时钟偏差的后验。若需要在线谱域与几何域之间迭代，则几何因子返回给相位变量的消息为
-
-$$
-m_{f_n\rightarrow x_n}(\boldsymbol x_n)
-\propto
-\int
-\delta\!\left(
-\boldsymbol x_n-\boldsymbol g_n(\boldsymbol z)
-\right)
-m_{z\rightarrow f_n}(\boldsymbol z)
-\mathrm d\boldsymbol z,
-$$
-
-即几何空腔信念经过非线性映射
-$\boldsymbol g_n$ 后的推前分布。这里的
-$m_{z\rightarrow f_n}$ 必须排除接收站 $n$ 自身传入的
-$m_{f_n\rightarrow z}$，以免信息自反馈。
-
-在以 $\boldsymbol z$ 为联合几何变量节点的表示下，该空腔消息为
+由于单个接收站的
+$\boldsymbol\Lambda_{z,n}^{(l)}$ 可能秩亏，该消息不一定能单独归一化为完整维度的高斯分布，但其信息形式仍然有效。融合全部接收站消息与第 3.6 节的固定几何先验
+$p(\boldsymbol z)=\mathcal N(\boldsymbol z;\boldsymbol z^{(0)},\mathbf C_{z,0})$，得到第 $l$ 次更新的几何后验
 
 $$
-m_{z\rightarrow f_n}(\boldsymbol z)
+b^{(l)}(\boldsymbol z)
 \propto
 p(\boldsymbol z)
-\prod_{\substack{m=1\\m\neq n}}^{N_{\mathrm{Rx}}}
-m_{f_m\rightarrow z}(\boldsymbol z).
-$$
-
-将该推前分布近似为
-$\mathcal N(\boldsymbol\mu_{x,n}^{\mathrm{geo}},
-\mathbf V_{x,n}^{\mathrm{geo}})$ 后，相对于当前 Taylor 中心
-
-$$
-\boldsymbol x_n^{(l-1)}
+\prod_{n=1}^{N_{\mathrm{Rx}}}
+m_{f_n\rightarrow z}(\boldsymbol z)
 =
-\begin{bmatrix}
-\boldsymbol\theta_n^{(l-1)}\\
-\boldsymbol\tau_n^{(l-1)}
-\end{bmatrix}
+\mathcal N\!\left(
+\boldsymbol z;
+\boldsymbol\mu_z^{(l)},
+\mathbf C_z^{(l)}
+\right),
 $$
 
-的线谱输入消息参数为
+其中
 
 $$
-\boldsymbol\Lambda_{\xi,n}^{\mathrm{in}}
-=\left(\mathbf V_{x,n}^{\mathrm{geo}}\right)^{-1},
-\qquad
-\boldsymbol\eta_{\xi,n}^{\mathrm{in}}
-=\boldsymbol\Lambda_{\xi,n}^{\mathrm{in}}
-\left(
-\boldsymbol\mu_{x,n}^{\mathrm{geo}}
--\boldsymbol x_n^{(l-1)}
-\right).
+\left(\mathbf C_z^{(l)}\right)^{-1}
+=\mathbf C_{z,0}^{-1}
++\sum_{n=1}^{N_{\mathrm{Rx}}}
+\boldsymbol\Lambda_{z,n}^{(l)},
 $$
 
-这样，Taylor 展开只服务于第一部分的连续线谱估计，而目标位置、UE 位置和时钟偏差始终通过非线性 Dirac 几何因子进行消息传递。
+$$
+\boldsymbol\mu_z^{(l)}
+=\mathbf C_z^{(l)}
+\left[
+\mathbf C_{z,0}^{-1}\boldsymbol z^{(0)}
++\sum_{n=1}^{N_{\mathrm{Rx}}}
+\boldsymbol\eta_{z,n}^{(l)}
+\right].
+$$
 
-### 6.5 统一推断流程
+取
+$\boldsymbol z^{(l)}=\boldsymbol\mu_z^{(l)}$ 作为下一次 Taylor 展开点，并重新计算
+$\boldsymbol g_n^{(l)}$ 与 $\mathbf J_n^{(l)}$，直至几何后验均值收敛。每次重新线性化都应重新使用固定先验
+$p(\boldsymbol z)$ 与当前线谱外信息构造后验，不能把上一次已经融合过相同消息的
+$b^{(l-1)}(\boldsymbol z)$ 再当作新先验，否则会重复计算信息。若更新步长过大，可对
+$\boldsymbol z^{(l)}-\boldsymbol z^{(l-1)}$ 使用阻尼或信赖域。
+
+最终从
+$\boldsymbol\mu_z^{(l)}$ 的对应分块读取各目标位置、UE 位置和公共时钟偏差的后验均值，从
+$\mathbf C_z^{(l)}$ 的对应对角分块读取其后验协方差。
+
+### 5.5 统一推断流程
 
 ```text
 输入：双 Rx 原始观测、Rx 几何、OFDM/阵列参数、UE 粗位置
@@ -1234,25 +1260,25 @@ $$
 
 第一部分：连续线谱贝叶斯估计
 6. 以 2D-FFT 的 theta_n^(0)、tau_n^(0) 为首次 Taylor 展开中心。
-7. 计算 Phi_n、Phi_theta,n 和 Phi_tau,n，构造关于 xi_n=[Delta theta_n;Delta tau_n] 的局部线性模型。
-8. 交替更新 q(h_n)、q(gamma_n) 和 q(xi_n)，直至线谱模块收敛。
+7. 计算 Phi_n、Phi_theta,n 和 Phi_tau,n，构造直接关于 theta_n 和 tau_n 的局部线性模型。
+8. 交替更新 q(h_n)、q(gamma_n) 和联合后验 q(theta_n,tau_n)，直至线谱模块收敛。
 9. 更新 Taylor 中心并按需重新线性化，输出保留角度—时延交叉协方差的联合外信息。
 
-第二部分：非线性几何消息传递
-10. 将线谱联合外信息送入 p(theta|P) 和 p(tau|P,p_UE,Delta t) 对应的 Dirac 因子。
-11. 在非线性几何因子图上融合各 Rx 消息与几何高斯先验，得到 b(z)。
-12. 使用粒子、sigma-point 或局部 Laplace 投影表示非高斯几何消息。
-13. 默认由 b(z) 输出目标位置、UE 位置和时钟偏差的后验。
-14. 若采用迭代式两模块推断，则由几何空腔信念生成外信息并反馈给线谱模块，直至消息或后验均值收敛。
+第二部分：Dirac 几何因子的线性化消息传递
+10. 以 z^(l-1) 为展开点，对各 Dirac 因子内部的几何映射 g_n(z) 作一阶 Taylor 展开。
+11. 将线谱联合高斯外信息通过线性化后的 Dirac 因子，转换成传向 z 的高斯信息消息。
+12. 融合各 Rx 的信息消息与固定几何先验 p(z)，解析计算 b^(l)(z)=N(z;mu_z^(l),C_z^(l))。
+13. 令 z^(l)=mu_z^(l)，重新计算几何映射及其 Jacobian；必要时采用阻尼或信赖域，迭代至后验均值收敛。
+14. 从最终后验的相应分块输出目标位置、UE 位置和时钟偏差的均值与协方差。
 ```
 
-## 7. 可辨识性与数值稳定性
+## 6. 可辨识性与数值稳定性
 
-### 7.1 路径标签与数据关联
+### 6.1 路径标签与数据关联
 
 参数化模型要求两个接收站的第 $k$ 条路径对应同一目标。路径排列本身具有置换不变性，因此必须通过粗估计阶段的数据关联固定标签，或在贝叶斯推断中显式处理路径置换。当前方案采用前者。
 
-### 7.2 几何可辨识性
+### 6.2 几何可辨识性
 
 - 目标数量只是可辨识性的必要条件之一；
 - 目标、UE 与接收站的退化几何会导致雅可比秩亏或条件数过大；
@@ -1261,24 +1287,24 @@ $$
 
 建议记录几何可辨识性矩阵的最小奇异值、条件数以及 $b(\boldsymbol z)$ 中 UE 位置与 $\Delta t$ 的后验相关系数。
 
-### 7.3 数值检查
+### 6.3 数值检查
 
 - 构造 $\arccos$ 前将方向余弦裁剪到 $[-1,1]$；
 - 检查所有目标到 UE 和接收站的距离分母不为零；
 - 保证 $\gamma_n>0$，并统一 Gamma 分布的 rate/scale 约定；
 - 保证 $\boldsymbol\Sigma_{h,n}$ 和几何先验协方差为 Hermitian/实对称正定矩阵；
 - 用线性方程求解代替显式矩阵求逆；
-- 对 $\mathbf C_{h,n}$、$\mathbf C_{\xi,n}$ 及采用高斯投影时的几何消息协方差使用 Cholesky 分解或对称化处理；
+- 对 $\mathbf C_{h,n}$、$\mathbf C_{x,n}$ 和几何后验协方差 $\mathbf C_z^{(l)}$ 使用 Cholesky 分解或对称化处理；
 - 以当前 Taylor 中心为参考对周期相位增量解缠；
 - 每次线谱相位中心更新后重新计算 $\boldsymbol\Phi_n$、$\boldsymbol\Phi_{\theta,n}$ 和 $\boldsymbol\Phi_{\tau,n}$；
-- 检查 $\Delta\boldsymbol\theta_n$ 和 $\Delta\boldsymbol\tau_n$ 是否位于 Taylor 信赖域，并记录阻尼系数和局部 ELBO 变化；
-- 几何消息传递必须使用空腔消息或外信息，避免在两个模块之间重复累计同一信息；
-- 对非线性 Dirac 因子的推前消息和反向消息检查归一化、有限矩以及多峰性；
+- 检查 $\boldsymbol\theta_n-\boldsymbol\theta_n^{(l-1)}$ 和 $\boldsymbol\tau_n-\boldsymbol\tau_n^{(l-1)}$ 是否位于 Taylor 信赖域，并记录阻尼系数和局部 ELBO 变化；
+- 检查几何 Jacobian 的秩和条件数，并保留单站秩亏消息的信息形式；
+- 每次重新线性化都由固定几何先验和当前线谱外信息重新构造后验，避免重复累计同一信息；
 - 对解析矩阵矩与数值采样结果做小规模交叉验证，确认协方差项实现正确。
 
-## 8. 实验整理
+## 7. 实验整理
 
-### 8.1 固定配置
+### 7.1 固定配置
 
 - [ ] UE、两个接收站和 $K$ 个目标的二维坐标；
 - [ ] 两个 ULA 的朝向、阵元数、阵元间距和载频；
@@ -1289,20 +1315,19 @@ $$
 - [ ] 路径关联门限与冲突消解规则；
 - [ ] LM 初始阻尼、停止门限和最大迭代次数；
 - [ ] 三类几何先验协方差 $\mathbf C_{p,k}^{(0)}$、$\mathbf C_{\mathrm{UE}}^{(0)}$、$\sigma_{\Delta t,0}^2$；
-- [ ] Taylor 展开的信赖域、阻尼规则和线谱模块停止条件；
-- [ ] 非线性几何消息采用粒子、sigma-point 还是局部 Laplace 投影；
-- [ ] 两模块仅执行一次还是采用外信息反馈迭代，以及相应的消息停止条件。
+- [ ] 线谱与几何 Taylor 展开的信赖域、阻尼规则和停止条件；
+- [ ] 几何 Jacobian 的计算方式、秩判定阈值和病态矩阵处理规则；
 
-### 8.2 建议对比方法
+### 7.2 建议对比方法
 
 1. 仅 2D-FFT + 几何 LM，不进行贝叶斯精化；
 2. Taylor 线谱估计后直接将角度和时延后验均值代入几何方程；
-3. Taylor 线谱估计 + 单次非线性几何消息传递；
-4. 带几何外信息反馈的两模块迭代消息传递；
+3. Taylor 线谱估计 + 单次线性化 Dirac 几何消息传递；
+4. Taylor 线谱估计 + 迭代重线性化的几何后验更新；
 5. 固定噪声精度、固定 UE 位置或固定时钟偏差的消融方法；
 6. 原位置网格稀疏方法可作为历史基线，但不属于当前概率模型。
 
-### 8.3 评价指标
+### 7.3 评价指标
 
 - 目标位置 RMSE 或多目标 Chamfer distance；
 - UE 位置 RMSE；
@@ -1314,7 +1339,7 @@ $$
 - 后验可信区间覆盖率；
 - 运行时间与峰值内存。
 
-### 8.4 正确性测试
+### 7.4 正确性测试
 
 - [ ] 无噪声单径情况下，2D-FFT 峰值映射到正确的归一化空间相位和时延相位，并能反归一化为正确的方向余弦和秒单位测量时延；
 - [ ] 使用真实角度和时延时，LM 能恢复目标、UE 与时钟偏差；
@@ -1323,13 +1348,13 @@ $$
 - [ ] 固定几何时，$q(\boldsymbol h_n)$ 与标准线性复高斯后验一致；
 - [ ] Gamma 更新中的期望残差包含均值和协方差两部分；
 - [ ] 线谱模块每轮变分更新后局部 ELBO 不降低，或满足规定的接受准则；
-- [ ] Dirac 因子的前向消息满足 $m_{f_n\rightarrow z}(\boldsymbol z)=m_{\mathrm{LS},n}(\boldsymbol g_n(\boldsymbol z))$；
-- [ ] 关闭外信息反馈时，两阶段结果与直接顺序实现一致；开启反馈时不存在信息自循环；
+- [ ] 在线性化误差可忽略时，Dirac 因子的消息满足 $m_{f_n\rightarrow z}(\boldsymbol z)\approx m_{\mathrm{LS},n}(\boldsymbol g_n^{(l-1)}+\mathbf J_n^{(l-1)}\Delta\boldsymbol z^{(l)}))$；
+- [ ] 由信息参数解析计算的几何后验与直接高斯乘积结果一致；
 - [ ] 两个接收站交换顺序不改变对称场景的最终结果；
 - [ ] 路径排列改变后，经数据关联得到的几何结果保持一致；
 - [ ] 几何秩亏时能够给出诊断，而不是输出虚假的高置信度结果。
 
-## 9. 当前代码接口与后续实现边界
+## 8. 当前代码接口与后续实现边界
 
 当前仓库已经具备：
 
@@ -1350,22 +1375,22 @@ update_angle_delay_posterior
 form_linespectral_extrinsic_message
 evaluate_linespectral_elbo
 propagate_dirac_geometry_message
-project_nonlinear_geometry_message
-form_geometry_extrinsic_message
+build_geometry_jacobian
+update_geometry_posterior
 check_message_convergence
 summarize_geometry_posterior
 ```
 
 现有 `JSLES*.m`、`OGVAMP.m` 及位置网格感知矩阵函数实现的是原稀疏网格模型，不能直接视为本概率模型的变分实现。若保留，应在实验中标记为历史基线；当前技术路线的新推断模块应围绕 $K$ 列参数化路径矩阵 $\boldsymbol\Phi_n$、其角度/时延列导数矩阵和局部 Taylor 观测模型重新实现。
 
-## 10. 实现前仍需固定的模型约定
+## 9. 实现前仍需固定的模型约定
 
 1. $K$ 是已知场景参数，还是需要由 2D-FFT/模型选择联合估计；
 2. $\boldsymbol\Sigma_{h,n}$ 是固定先验协方差，还是需要增加超先验并学习；
 3. 几何先验协方差如何由 FFT 峰宽、LM Hessian、GPS 误差或经验参数确定；
 4. Taylor 线性化允许的最大归一化角度增量、最大归一化时延增量以及阻尼/信赖域参数；
-5. 非线性 Dirac 消息采用粒子、sigma-point 还是局部 Laplace 投影，以及是否保留多峰结构；
-6. 是否在线谱模块与几何模块之间迭代，以及外信息的计算和阻尼规则；
+5. Dirac 因子内部几何映射的一阶展开采用解析 Jacobian、自动微分还是数值差分；
+6. 几何后验重线性化的停止准则、阻尼规则和最大迭代次数；
 7. 是否对目标位置后验采用目标间独立的块对角协方差，还是保留数据关联造成的相关性；
 8. 时钟偏差使用秒 $\Delta t$ 还是距离偏差 $b=c\Delta t$ 作为内部变量；
 9. 当 2D-FFT 漏检、虚警或两条路径不可分辨时，路径数和标签如何处理。
