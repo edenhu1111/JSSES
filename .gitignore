@@ -1,0 +1,6 @@
+*.log
+*.asv
+*.mat
+\abandoned
+\dataset
+\results
